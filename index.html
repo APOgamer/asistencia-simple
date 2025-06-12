@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Asistencia Simple</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Sistema de Asistencia Simple</h1>
+        
+        <div class="upload-section">
+            <div class="upload-box">
+                <h3>Lista de Alumnos (Excel)</h3>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <select id="excelFileSelect" onchange="processExcel()">
+                        <option value="">Seleccione un archivo Excel</option>
+                    </select>
+                    <button id="abrirExcelPreview" onclick="abrirExcelPreview()">Abrir Vista Previa</button>
+                </div>
+                <div id="excelPreviewBox" style="display:none; margin-top:10px;">
+                    <button id="cerrarExcelPreview" style="margin-bottom:10px;" onclick="cerrarExcelPreview()">Cerrar Lista</button>
+                    <div id="excelData"></div>
+                </div>
+            </div>
+
+            <div class="upload-box">
+                <h3>Archivo de Huellero (.dat)</h3>
+                <div class="dat-upload">
+                    <label class="custom-file-label">
+                        <input type="file" id="datFile" accept=".dat" onchange="previewDatFile()">
+                        Seleccionar archivo
+                    </label>
+                    <input type="date" id="attendanceDate" required>
+                    <button onclick="uploadDatFile()">Subir Asistencia</button>
+                </div>
+                <button id="btnActualizarVistaPrevia" onclick="actualizarVistaPreviaDat()" style="margin-top:10px;width:100%;">Actualizar Vista Previa</button>
+                <div id="datPreview" class="preview-box"></div>
+            </div>
+        </div>
+
+        <div class="results-section">
+            <h2>Resultados</h2>
+            <div id="excelResults" class="results-box">
+                <h3>Lista de Alumnos</h3>
+                <div id="excelData"></div>
+                <button id="cerrarExcelPreview" style="display:none;margin:10px 0;" onclick="cerrarExcelPreview()">Cerrar Lista</button>
+            </div>
+
+            <div id="attendanceResults" class="results-box">
+                <h3>Asistencias</h3>
+                <div class="attendance-controls">
+                    <div class="date-filter">
+                        <label for="filterDate">Filtrar por fecha:</label>
+                        <input type="date" id="filterDate" onchange="filterAttendance()">
+                    </div>
+                    <div class="attendance-actions">
+                        <button onclick="selectAllAttendance()">Seleccionar Todo</button>
+                        <button onclick="deselectAllAttendance()">Deseleccionar Todo</button>
+                    </div>
+                    <button onclick="sendWhatsAppNotifications()">Enviar Notificaciones</button>
+                    <div class="cleanup-controls">
+                        <button onclick="limpiarHistorialAsistencias()" class="cleanup-btn">Limpiar Historial Asistencias</button>
+                        <button onclick="recargarListas()" class="cleanup-btn">Recargar Listas</button>
+                        <button onclick="limpiarHistorialEntero()" class="cleanup-btn danger">Limpiar Historial Entero</button>
+                    </div>
+                </div>
+                <div id="attendanceData"></div>
+                <div class="whatsapp-section">
+                    <h3>Enviar Notificaciones</h3>
+                    <button onclick="sendWhatsAppNotifications()">Enviar a WhatsApp</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html> 
