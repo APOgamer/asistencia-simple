@@ -4,8 +4,8 @@ let asistenciasData = [];
 let selectedAttendanceFiles = new Set();
 
 // Configuración de WhatsApp
-const WSP_TOKEN = 'EAAM5mSgL25ABO6SUS2HK1u145tSW1XFSEFfRqSxvewEEWIkOYTFOMMZAr8N0DvmkK5rX7e6hX5cFlkbZAUZATEzQNTVSBbQRJgLSdkYhZCX93PnsO0q2S6lMfLwlrA1ZBzkZB1f8s8TTSNpqFaV4ifzxqjGLPcc5sHeaupDax3KVfwBCZAgfwFnvm9oXXiPdxw1PpMEDJrZC5VtyqydSrcongjMZD';
-const WSP_PHONE_ID = '623057164230598';
+const WSP_TOKEN = 'EAAUJUvz0VZBEBO4CM5UcvlRz3y3vx1zZAwHuOwf1fZBOYb0RKxU43tXXigdBc2JAYDgvpWeHzmB8jVcOOqwJisSpaTtbfbUs1YSDt4qGzEZCBRTC8YtCZCcMXTLgvliJhlZBiVn1m4mxucgRSJrMsI4HxOfwNP5fZA83d9cW6aHXNmxupRmarbZAPsZAb7rmqaQEiIdIcAhlUX2Somyxo';
+const WSP_PHONE_ID = '651602738042158';
 
 // Configuración de turnos
 const CONFIG_TURNOS = {
@@ -840,11 +840,16 @@ function displayAttendanceData() {
     container.innerHTML = html;
 }
 
-// Enviar notificaciones por WhatsApp
+
+
+function formatearNumero(numero) {
+    return numero.startsWith('51') ? numero : '51' + numero;
+}
+
 async function sendWhatsAppNotifications() {
     console.log('\n=== Enviando notificaciones ===');
     console.log('Fechas seleccionadas:', Array.from(selectedAttendanceFiles));
-    
+
     if (selectedAttendanceFiles.size === 0) {
         alert('Por favor, selecciona al menos una fecha para enviar notificaciones');
         return;
@@ -852,9 +857,11 @@ async function sendWhatsAppNotifications() {
 
     const asistenciasGuardadas = JSON.parse(localStorage.getItem('asistenciasData') || '{}');
     console.log('Asistencias guardadas:', asistenciasGuardadas);
-    
+
     let totalEnviados = 0;
     let totalErrores = 0;
+
+    const ausenciasPorAlumno = {};
 
     for (const fecha of selectedAttendanceFiles) {
         console.log('\nProcesando fecha:', fecha);
@@ -864,60 +871,102 @@ async function sendWhatsAppNotifications() {
             continue;
         }
 
-        // Filtrar alumnos faltantes considerando turnos
-        const alumnosFaltantes = alumnosData.filter(alumno => 
+        const alumnosFaltantes = alumnosData.filter(alumno =>
             determinarFalta(alumno, data.asistencias, fecha) && alumno.celular
         );
-        
+
         console.log('Alumnos faltantes encontrados:', alumnosFaltantes.length);
 
-        // Enviar mensajes a los faltantes
         for (const alumno of alumnosFaltantes) {
-            const turno = getTurno(alumno.seccion);
-            const mensaje = `Estimado/a ${alumno.nombre},\n\nLe informamos que usted no registró asistencia el día ${new Date(fecha).toLocaleDateString()} en el turno ${turno}. Por favor, justifique su ausencia.\n\nSaludos cordiales.`;
-            
-            console.log('Enviando mensaje a:', {
-                alumno: alumno.nombre,
-                celular: alumno.celular,
-                turno: turno
-            });
-            
-            try {
-                const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${WSP_TOKEN}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        messaging_product: "whatsapp",
-                        to: alumno.celular,
-                        type: "text",
-                        text: { body: mensaje }
-                    })
-                });
-
-                if (!response.ok) {
-                    console.error(`Error al enviar mensaje a ${alumno.nombre}:`, await response.text());
-                    totalErrores++;
-                } else {
-                    console.log('Mensaje enviado exitosamente');
-                    totalEnviados++;
-                }
-            } catch (error) {
-                console.error(`Error al enviar mensaje a ${alumno.nombre}:`, error);
-                totalErrores++;
+            const id = alumno.nombre + '_' + alumno.celular;
+            if (!ausenciasPorAlumno[id]) {
+                ausenciasPorAlumno[id] = {
+                    alumno: alumno,
+                    fechas: []
+                };
             }
+            ausenciasPorAlumno[id].fechas.push(new Date(fecha));
         }
     }
-    
+
+    for (const id in ausenciasPorAlumno) {
+        const { alumno, fechas } = ausenciasPorAlumno[id];
+        const fechaFormateada = fechas
+    .sort((a, b) => a - b)
+    .map(f => {
+        const fechaAjustada = new Date(f.getTime() + 24 * 60 * 60 * 1000); // sumar 1 día
+        return fechaAjustada.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+    });
+
+
+        const plantilla = fechas.length > 1 ? 'alertafaltasvarias' : 'alerta_faltas';
+
+        const parametros = [
+            { type: "text", text: alumno.nombre },
+            { type: "text", text: fechas.length > 1 ? fechaFormateada.join(', ') : fechaFormateada[0] }
+        ];
+
+        console.log(`Enviando plantilla "${plantilla}" a:`, {
+            alumno: alumno.nombre,
+            celular: alumno.celular,
+            fechas: fechaFormateada
+        });
+
+        try {
+            const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${WSP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    messaging_product: "whatsapp",
+                    to: formatearNumero(alumno.celular),
+                    type: "template",
+                    template: {
+                        name: plantilla,
+                        language: {
+                            code: "es"
+                        },
+                        components: [
+                            {
+                                type: "body",
+                                parameters: parametros
+                            }
+                        ]
+                    }
+                })
+            });
+
+            const result = await response.json();
+            console.log('Respuesta de WhatsApp API:', result);
+
+            if (!response.ok || result.error) {
+                console.error(`Error al enviar mensaje a ${alumno.nombre}:`, result.error || result);
+                totalErrores++;
+            } else {
+                console.log('Mensaje enviado exitosamente');
+                totalEnviados++;
+            }
+        } catch (error) {
+            console.error(`Error al enviar mensaje a ${alumno.nombre}:`, error);
+            totalErrores++;
+        }
+    }
+
     console.log('Resumen de envío:', {
         totalEnviados,
         totalErrores
     });
-    
+
     alert(`Notificaciones enviadas:\n- Enviados: ${totalEnviados}\n- Errores: ${totalErrores}`);
 }
+
+
 
 // Cargar datos guardados al iniciar
 window.onload = function() {
