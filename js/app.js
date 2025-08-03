@@ -3,8 +3,11 @@ let alumnosData = [];
 let asistenciasData = [];
 let selectedAttendanceFiles = new Set();
 
+// Variable global para almacenar las secciones seleccionadas
+let seccionesSeleccionadas = new Set();
+
 // Configuración de WhatsApp
-const WSP_TOKEN = 'EAAUJUvz0VZBEBO4CM5UcvlRz3y3vx1zZAwHuOwf1fZBOYb0RKxU43tXXigdBc2JAYDgvpWeHzmB8jVcOOqwJisSpaTtbfbUs1YSDt4qGzEZCBRTC8YtCZCcMXTLgvliJhlZBiVn1m4mxucgRSJrMsI4HxOfwNP5fZA83d9cW6aHXNmxupRmarbZAPsZAb7rmqaQEiIdIcAhlUX2Somyxo';
+const WSP_TOKEN = 'EAAUJUvz0VZBEBPJUnxY035Gj80Ydv6KnV48c1O8awAi0KIUcyKhZA3HqGgNjrO8dWSbmWdfk70HPyGnpBLaNsoDuPAh2iyYSosYdxvou3QF3Vc2ZB8pO3v350OjzPPqC9z0MHavoNMxQIOeBjsYjJhxlrwuYN5Ey39vsj0k42da2eOlYSpSq7pjhY3zlGdtAdkyf1nnOZC7GfSdGzftVro9C97rNJ9w4e3mF06uKHZAJRiT2aFB8TG7UFV76GJQZDZD';
 const WSP_PHONE_ID = '651602738042158';
 
 // Configuración de turnos
@@ -117,8 +120,128 @@ async function uploadDatFile() {
         return;
     }
 
+    // Verificar si hay secciones seleccionadas
+    if (seccionesSeleccionadas.size === 0) {
+        alert('Por favor, selecciona al menos una sección para procesar');
+        return;
+    }
+
     try {
-        // Leer el contenido del archivo
+        console.log('\n=== PROCESANDO ARCHIVO .DAT ===');
+        console.log('1. Secciones seleccionadas:', Array.from(seccionesSeleccionadas));
+        console.log('2. Cargando archivos Excel de las secciones seleccionadas...');
+        
+        // Cargar todos los archivos Excel disponibles
+        const response = await fetch('/uploads');
+        const files = await response.json();
+        const excelFiles = files.filter(file => file.endsWith('.xlsx') || file.endsWith('.xls'));
+        
+        console.log('3. Archivos Excel encontrados:', excelFiles);
+        
+        // Procesar solo los archivos Excel de las secciones seleccionadas
+        let todosLosAlumnos = [];
+        
+        for (const excelFile of excelFiles) {
+            console.log(`4. Procesando archivo Excel: ${excelFile}`);
+            
+            try {
+                const excelResponse = await fetch(`/uploads/${excelFile}`);
+                const arrayBuffer = await excelResponse.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                workbook.SheetNames.forEach(sheetName => {
+                    console.log(`   - Procesando hoja: ${sheetName}`);
+                    
+                    // Extraer grado y sección del nombre de la hoja
+                    const gradoMatch = sheetName.match(/\d+/);
+                    const seccionMatch = sheetName.match(/[A-F]$/);
+                    
+                    let grado = null;
+                    let seccion = null;
+                    const sheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+                    if (gradoMatch && seccionMatch) {
+                        // Si coincide con el patrón del nombre de la hoja
+                        grado = parseInt(gradoMatch[0]);
+                        seccion = seccionMatch[0];
+                        console.log(`     ✓ Grado y sección extraídos del nombre: ${grado}${seccion}`);
+                    } else {
+                        // Buscar en la celda A3 (fila 2, columna 0)
+                        if (jsonData.length > 2 && jsonData[2] && jsonData[2][0]) {
+                            const celdaA3 = jsonData[2][0];
+                            console.log(`     - Contenido de celda A3: "${celdaA3}"`);
+                            
+                            // Buscar patrón como "GRADO: 2° D" o "GRADO: 2 D" o "GRADO: 2°D"
+                            const patronGrado = celdaA3.match(/GRADO:\s*(\d+)[°º]?\s*([A-F])/i);
+                            if (patronGrado) {
+                                grado = parseInt(patronGrado[1]);
+                                seccion = patronGrado[2].toUpperCase();
+                                console.log(`     ✓ Grado y sección encontrados en A3: ${grado}${seccion}`);
+                            } else {
+                                console.log(`     ✗ No se encontró el patrón en A3, usando valores por defecto`);
+                                grado = 1;
+                                seccion = 'A';
+                            }
+                        } else {
+                            console.log(`     ✗ Celda A3 no encontrada, usando valores por defecto`);
+                            grado = 1;
+                            seccion = 'A';
+                        }
+                    }
+
+                    // Solo procesar si la sección está seleccionada
+                    const seccionCompleta = `${grado}${seccion}`;
+                    if (!seccionesSeleccionadas.has(seccionCompleta)) {
+                        console.log(`     ⏭️ Sección ${seccionCompleta} no seleccionada, saltando...`);
+                        return;
+                    }
+
+                    console.log(`     ✅ Procesando sección ${seccionCompleta} (seleccionada)`);
+
+                    // Procesar filas (empezando desde la fila 4 para saltar encabezados)
+                    let alumnosEncontrados = 0;
+                    for (let i = 4; i < 34; i++) {
+                        if (!jsonData[i] || !jsonData[i][0]) continue;
+
+                        const numero = parseInt(jsonData[i][0]);
+                        const nombre = jsonData[i][2] || '';
+                        const celular = jsonData[i][6] || '';
+
+                        if (!isNaN(numero) && nombre && nombre.toLowerCase() !== 'nombre completo') {
+                            const alumno = {
+                                numero,
+                                nombre,
+                                celular: celular.toString().replace(/\D/g, ''),
+                                seccion: seccionCompleta,
+                                archivoOrigen: excelFile
+                            };
+                            todosLosAlumnos.push(alumno);
+                            alumnosEncontrados++;
+                        }
+                    }
+                    
+                    console.log(`     - Alumnos encontrados en ${sheetName}: ${alumnosEncontrados}`);
+                });
+                
+            } catch (error) {
+                console.error(`Error al procesar archivo ${excelFile}:`, error);
+            }
+        }
+        
+        console.log('5. Total de alumnos cargados de las secciones seleccionadas:', todosLosAlumnos.length);
+        console.log('6. Alumnos por sección:', todosLosAlumnos.reduce((acc, alumno) => {
+            acc[alumno.seccion] = (acc[alumno.seccion] || 0) + 1;
+            return acc;
+        }, {}));
+        
+        // Actualizar la variable global alumnosData con solo los alumnos de las secciones seleccionadas
+        alumnosData = todosLosAlumnos;
+        localStorage.setItem('alumnosData', JSON.stringify(alumnosData));
+        
+        // Leer el contenido del archivo .dat
+        console.log('7. Procesando archivo .dat...');
         const content = await file.text();
         const todasLasAsistencias = processDatFile(content);
         
@@ -131,18 +254,6 @@ async function uploadDatFile() {
             const [year, month, day] = fecha.split('-').map(Number);
             const fechaAsistencia = new Date(year, month - 1, day);
             
-            console.log('Comparando fechas:', {
-                fechaSeleccionada: fechaSeleccionada.toISOString(),
-                fechaAsistencia: fechaAsistencia.toISOString(),
-                fechaOriginal: asistencia.fechaHora,
-                añoSeleccionado: fechaSeleccionada.getFullYear(),
-                mesSeleccionado: fechaSeleccionada.getMonth(),
-                diaSeleccionado: fechaSeleccionada.getDate(),
-                añoAsistencia: fechaAsistencia.getFullYear(),
-                mesAsistencia: fechaAsistencia.getMonth(),
-                diaAsistencia: fechaAsistencia.getDate()
-            });
-            
             // Comparar año, mes y día por separado
             const mismoAño = fechaAsistencia.getFullYear() === fechaSeleccionada.getFullYear();
             const mismoMes = fechaAsistencia.getMonth() === fechaSeleccionada.getMonth();
@@ -151,12 +262,12 @@ async function uploadDatFile() {
             return mismoAño && mismoMes && mismoDia;
         });
         
-        console.log('Subiendo archivo:', {
+        console.log('8. Resumen de procesamiento:', {
             fechaSeleccionada: fechaSeleccionada.toISOString(),
             totalRegistros: todasLasAsistencias.length,
             registrosFiltrados: nuevasAsistencias.length,
-            fechaInput: dateInput.value,
-            registrosFiltradosDetalle: nuevasAsistencias.map(a => a.fechaHora)
+            totalAlumnosDisponibles: alumnosData.length,
+            seccionesProcesadas: Array.from(seccionesSeleccionadas)
         });
         
         if (nuevasAsistencias.length === 0) {
@@ -190,7 +301,7 @@ async function uploadDatFile() {
         };
         localStorage.setItem('asistenciasData', JSON.stringify(asistenciasGuardadas));
         
-        alert(`Archivo procesado correctamente.\nTotal de registros en el archivo: ${todasLasAsistencias.length}\nRegistros del día ${dateInput.value}: ${nuevasAsistencias.length}`);
+        alert(`Archivo procesado correctamente.\nTotal de registros en el archivo: ${todasLasAsistencias.length}\nRegistros del día ${dateInput.value}: ${nuevasAsistencias.length}\nTotal de alumnos disponibles: ${alumnosData.length}\nSecciones procesadas: ${Array.from(seccionesSeleccionadas).join(', ')}`);
         
         // Limpiar formulario
         fileInput.value = '';
@@ -269,41 +380,83 @@ function horaAMinutos(hora) {
 function determinarFalta(alumno, asistencias, fecha) {
     console.log('\n=== Rastreo de fechas en determinarFalta ===');
     console.log('1. Fecha recibida como parámetro:', fecha);
+    console.log('2. Alumno a verificar:', alumno);
+    console.log('3. Total de asistencias disponibles:', asistencias.length);
     
     const turno = getTurno(alumno.seccion);
+    console.log('4. Turno del alumno:', turno);
     
-    // Asegurarnos de que tenemos un objeto Date
-    const fechaAsistencia = fecha instanceof Date ? fecha : new Date(fecha);
+    // Crear fecha de asistencia de manera consistente
+    let fechaAsistencia;
+    if (fecha instanceof Date) {
+        fechaAsistencia = fecha;
+    } else if (typeof fecha === 'string') {
+        // Si es string "YYYY-MM-DD", crear fecha local
+        const [year, month, day] = fecha.split('-').map(Number);
+        fechaAsistencia = new Date(year, month - 1, day);
+    } else {
+        fechaAsistencia = new Date(fecha);
+    }
     
-    console.log('2. Fecha convertida a objeto Date:', fechaAsistencia);
-    console.log('3. Fecha en formato ISO:', fechaAsistencia.toISOString());
+    console.log('5. Fecha convertida a objeto Date:', fechaAsistencia);
+    console.log('6. Fecha en formato ISO:', fechaAsistencia.toISOString());
     
-    // Filtrar asistencias por fecha
+    // Filtrar asistencias por fecha usando comparación de componentes
     const asistenciasDelDia = asistencias.filter(a => {
         const [fecha, hora] = a.fechaHora.split(' ');
         const [year, month, day] = fecha.split('-').map(Number);
         const fechaRegistro = new Date(year, month - 1, day);
         
-        console.log('4. Comparando fechas:', {
+        console.log('7. Comparando fechas:', {
             fechaAsistencia: fechaAsistencia.toISOString(),
             fechaRegistro: fechaRegistro.toISOString(),
-            fechaHoraOriginal: a.fechaHora
+            fechaHoraOriginal: a.fechaHora,
+            añoSeleccionado: fechaAsistencia.getFullYear(),
+            mesSeleccionado: fechaAsistencia.getMonth(),
+            diaSeleccionado: fechaAsistencia.getDate(),
+            añoAsistencia: fechaRegistro.getFullYear(),
+            mesAsistencia: fechaRegistro.getMonth(),
+            diaAsistencia: fechaRegistro.getDate()
         });
-        return fechaRegistro.toDateString() === fechaAsistencia.toDateString();
+        
+        // Comparar usando componentes de fecha para evitar problemas de zona horaria
+        return fechaRegistro.getFullYear() === fechaAsistencia.getFullYear() &&
+               fechaRegistro.getMonth() === fechaAsistencia.getMonth() &&
+               fechaRegistro.getDate() === fechaAsistencia.getDate();
     });
     
-    return !asistenciasDelDia.some(a => a.numero === alumno.numero);
+    console.log('8. Asistencias del día encontradas:', asistenciasDelDia.length);
+    console.log('9. Números de asistencias del día:', asistenciasDelDia.map(a => a.numero));
+    console.log('10. Número del alumno a buscar:', alumno.numero);
+    
+    const falta = !asistenciasDelDia.some(a => a.numero === alumno.numero);
+    console.log('11. ¿El alumno falta?', falta);
+    
+    return falta;
 }
 
 // Función para obtener la hora de llegada de un alumno
 function obtenerHoraLlegada(alumno, asistencias, fecha) {
     const turno = getTurno(alumno.seccion);
-    const fechaAsistencia = new Date(fecha);
     
-    // Filtrar asistencias por fecha
+    // Crear fecha de asistencia de manera consistente
+    let fechaAsistencia;
+    if (fecha instanceof Date) {
+        fechaAsistencia = fecha;
+    } else if (typeof fecha === 'string') {
+        // Si es string "YYYY-MM-DD", crear fecha local
+        const [year, month, day] = fecha.split('-').map(Number);
+        fechaAsistencia = new Date(year, month - 1, day);
+    } else {
+        fechaAsistencia = new Date(fecha);
+    }
+    
+    // Filtrar asistencias por fecha usando comparación de componentes
     const asistenciasDelDia = asistencias.filter(a => {
         const fechaRegistro = new Date(a.fechaHora);
-        return fechaRegistro.toDateString() === fechaAsistencia.toDateString();
+        return fechaRegistro.getFullYear() === fechaAsistencia.getFullYear() &&
+               fechaRegistro.getMonth() === fechaAsistencia.getMonth() &&
+               fechaRegistro.getDate() === fechaAsistencia.getDate();
     });
 
     // Obtener configuración del turno
@@ -619,47 +772,124 @@ async function processExcel() {
         return;
     }
 
+    console.log('\n=== PROCESANDO ARCHIVO EXCEL ===');
+    console.log('1. Archivo seleccionado:', fileName);
+
     try {
         const response = await fetch(`/uploads/${fileName}`);
         const arrayBuffer = await response.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         
+        console.log('2. Hojas encontradas en el archivo:', workbook.SheetNames);
+        
         // Procesar cada hoja del libro
         alumnosData = [];
         workbook.SheetNames.forEach(sheetName => {
+            console.log(`\n3. Procesando hoja: ${sheetName}`);
+            
             // Extraer grado y sección del nombre de la hoja
             const gradoMatch = sheetName.match(/\d+/);
             const seccionMatch = sheetName.match(/[A-F]$/);
             
+            console.log('4. Extracción de grado y sección:', {
+                gradoMatch: gradoMatch ? gradoMatch[0] : 'No encontrado',
+                seccionMatch: seccionMatch ? seccionMatch[0] : 'No encontrado'
+            });
+            
+            let grado = null;
+            let seccion = null;
+            const sheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+            console.log('5. Datos de la hoja:', {
+                totalFilas: jsonData.length,
+                primerasFilas: jsonData.slice(0, 5)
+            });
+
             if (gradoMatch && seccionMatch) {
-                const grado = parseInt(gradoMatch[0]);
-                const seccion = seccionMatch[0];
-                const sheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-                // Procesar filas (empezando desde la fila 4 para saltar encabezados)
-                for (let i = 4; i < 34; i++) {
-                    if (!jsonData[i] || !jsonData[i][0]) continue;
-
-                    const numero = parseInt(jsonData[i][0]);
-                    const nombre = jsonData[i][2] || '';
-                    const celular = jsonData[i][6] || '';
-
-                    if (!isNaN(numero) && nombre && nombre.toLowerCase() !== 'nombre completo') {
-                        alumnosData.push({
-                            numero,
-                            nombre,
-                            celular: celular.toString().replace(/\D/g, ''),
-                            seccion: `${grado}${seccion}`
-                        });
+                // Si coincide con el patrón del nombre de la hoja
+                grado = parseInt(gradoMatch[0]);
+                seccion = seccionMatch[0];
+                console.log('6. Grado y sección extraídos del nombre de la hoja:', { grado, seccion });
+            } else {
+                // Buscar en la celda A3 (fila 2, columna 0)
+                console.log('6. Buscando grado y sección en la celda A3...');
+                if (jsonData.length > 2 && jsonData[2] && jsonData[2][0]) {
+                    const celdaA3 = jsonData[2][0];
+                    console.log('   - Contenido de celda A3:', `"${celdaA3}"`);
+                    
+                    // Buscar patrón como "GRADO: 2° D" o "GRADO: 2 D" o "GRADO: 2°D"
+                    const patronGrado = celdaA3.match(/GRADO:\s*(\d+)[°º]?\s*([A-F])/i);
+                    if (patronGrado) {
+                        grado = parseInt(patronGrado[1]);
+                        seccion = patronGrado[2].toUpperCase();
+                        console.log(`   ✓ Grado y sección encontrados en A3: Grado ${grado}, Sección ${seccion}`);
+                    } else {
+                        console.log('   ✗ No se encontró el patrón esperado en A3');
+                        // Usar valores por defecto
+                        grado = 1;
+                        seccion = 'A';
+                        console.log('   - Usando valores por defecto:', { grado, seccion });
                     }
+                } else {
+                    console.log('   ✗ Celda A3 no encontrada o vacía');
+                    // Usar valores por defecto
+                    grado = 1;
+                    seccion = 'A';
+                    console.log('   - Usando valores por defecto:', { grado, seccion });
                 }
             }
+
+            // Procesar filas (empezando desde la fila 4 para saltar encabezados)
+            let alumnosEncontrados = 0;
+            console.log('7. Procesando filas de datos (filas 4-34):');
+            
+            for (let i = 4; i < 34; i++) {
+                if (!jsonData[i] || !jsonData[i][0]) {
+                    console.log(`   Fila ${i}: Vacía o sin datos`);
+                    continue;
+                }
+
+                // Mostrar información de la fila actual
+                console.log(`   Fila ${i}: [${jsonData[i].slice(0, 8).map((val, idx) => `Col${idx}:"${val}"`).join(', ')}]`);
+
+                const numero = parseInt(jsonData[i][0]);
+                const nombre = jsonData[i][2] || '';
+                const celular = jsonData[i][6] || '';
+
+                console.log(`   - Columna 0 (Número): "${jsonData[i][0]}" -> ${numero}`);
+                console.log(`   - Columna 2 (Nombre): "${jsonData[i][2]}" -> "${nombre}"`);
+                console.log(`   - Columna 6 (Celular): "${jsonData[i][6]}" -> "${celular}"`);
+
+                if (!isNaN(numero) && nombre && nombre.toLowerCase() !== 'nombre completo') {
+                    const alumno = {
+                        numero,
+                        nombre,
+                        celular: celular.toString().replace(/\D/g, ''),
+                        seccion: `${grado}${seccion}`
+                    };
+                    alumnosData.push(alumno);
+                    alumnosEncontrados++;
+                    console.log(`   ✓ Alumno agregado:`, alumno);
+                } else {
+                    console.log(`   ✗ Fila ${i} ignorada - datos inválidos`);
+                }
+            }
+            
+            console.log(`8. Total de alumnos encontrados en ${sheetName}: ${alumnosEncontrados}`);
         });
 
         // Ordenar por número
         alumnosData.sort((a, b) => a.numero - b.numero);
+
+        console.log('\n9. Resumen final:', {
+            totalAlumnos: alumnosData.length,
+            alumnosPorSeccion: alumnosData.reduce((acc, alumno) => {
+                acc[alumno.seccion] = (acc[alumno.seccion] || 0) + 1;
+                return acc;
+            }, {})
+        });
 
         // Guardar en localStorage
         localStorage.setItem('alumnosData', JSON.stringify(alumnosData));
@@ -700,29 +930,183 @@ async function processDat() {
 
 // Función para procesar el archivo .dat
 function processDatFile(content) {
+    console.log('\n=== PROCESANDO ARCHIVO .DAT ===');
+    console.log('1. Contenido del archivo (primeras 5 líneas):', content.split('\n').slice(0, 5));
+    
     const lines = content.split('\n');
     const asistencias = [];
     
-    lines.forEach(line => {
+    console.log('2. Total de líneas en el archivo:', lines.length);
+    
+    lines.forEach((line, index) => {
         if (line.trim()) {
+            console.log(`3. Procesando línea ${index + 1}:`, line);
+            
             // El formato es: numero fecha hora estado1 estado2 estado3 estado4
             const parts = line.split('\t');
+            console.log(`4. Partes de la línea ${index + 1}:`, parts);
+            
             if (parts.length >= 2) {
                 const numero = parseInt(parts[0]);
                 const fechaHora = parts[1].trim();
                 
+                console.log(`5. Datos extraídos de línea ${index + 1}:`, {
+                    numero: numero,
+                    fechaHora: fechaHora,
+                    esNumeroValido: !isNaN(numero)
+                });
+                
                 if (!isNaN(numero)) {
-                    asistencias.push({
+                    const asistencia = {
                         numero: numero,
                         presente: true,
                         fechaHora: fechaHora
-                    });
+                    };
+                    asistencias.push(asistencia);
+                    console.log(`6. Asistencia agregada:`, asistencia);
+                } else {
+                    console.log(`6. Línea ${index + 1} ignorada - número no válido`);
                 }
+            } else {
+                console.log(`4. Línea ${index + 1} ignorada - formato incorrecto`);
             }
         }
     });
     
+    console.log('\n7. Resumen del procesamiento .dat:', {
+        totalAsistencias: asistencias.length,
+        primerosRegistros: asistencias.slice(0, 5)
+    });
+    
     return asistencias;
+}
+
+// Función para cargar y mostrar las secciones disponibles
+async function cargarSeccionesDisponibles() {
+    console.log('\n=== CARGANDO SECCIONES DISPONIBLES ===');
+    
+    try {
+        const response = await fetch('/uploads');
+        const files = await response.json();
+        const excelFiles = files.filter(file => file.endsWith('.xlsx') || file.endsWith('.xls'));
+        
+        console.log('1. Archivos Excel encontrados:', excelFiles);
+        
+        const seccionesUnicas = new Set();
+        
+        // Procesar cada archivo Excel para obtener las secciones
+        for (const excelFile of excelFiles) {
+            try {
+                const excelResponse = await fetch(`/uploads/${excelFile}`);
+                const arrayBuffer = await excelResponse.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                workbook.SheetNames.forEach(sheetName => {
+                    // Extraer grado y sección del nombre de la hoja
+                    const gradoMatch = sheetName.match(/\d+/);
+                    const seccionMatch = sheetName.match(/[A-F]$/);
+                    
+                    let grado = null;
+                    let seccion = null;
+                    const sheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+                    if (gradoMatch && seccionMatch) {
+                        grado = parseInt(gradoMatch[0]);
+                        seccion = seccionMatch[0];
+                    } else {
+                        // Buscar en la celda A3
+                        if (jsonData.length > 2 && jsonData[2] && jsonData[2][0]) {
+                            const celdaA3 = jsonData[2][0];
+                            const patronGrado = celdaA3.match(/GRADO:\s*(\d+)[°º]?\s*([A-F])/i);
+                            if (patronGrado) {
+                                grado = parseInt(patronGrado[1]);
+                                seccion = patronGrado[2].toUpperCase();
+                            }
+                        }
+                    }
+                    
+                    if (grado && seccion) {
+                        seccionesUnicas.add(`${grado}${seccion}`);
+                    }
+                });
+                
+            } catch (error) {
+                console.error(`Error al procesar archivo ${excelFile}:`, error);
+            }
+        }
+        
+        console.log('2. Secciones únicas encontradas:', Array.from(seccionesUnicas));
+        
+        // Mostrar el selector de secciones
+        mostrarSelectorSecciones(Array.from(seccionesUnicas).sort());
+        
+    } catch (error) {
+        console.error('Error al cargar secciones:', error);
+    }
+}
+
+// Función para mostrar el selector de secciones
+function mostrarSelectorSecciones(secciones) {
+    const selector = document.getElementById('seccionSelector');
+    const contenedor = document.getElementById('seccionesDisponibles');
+    
+    if (secciones.length === 0) {
+        selector.style.display = 'none';
+        return;
+    }
+    
+    // Crear checkboxes para cada sección
+    contenedor.innerHTML = secciones.map(seccion => `
+        <label style="display: flex; align-items: center; padding: 8px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer;">
+            <input type="checkbox" value="${seccion}" onchange="toggleSeccion('${seccion}')" style="margin-right: 8px;">
+            <span style="font-weight: bold;">${seccion}</span>
+        </label>
+    `).join('');
+    
+    selector.style.display = 'block';
+    actualizarResumenSecciones();
+}
+
+// Función para alternar la selección de una sección
+function toggleSeccion(seccion) {
+    if (seccionesSeleccionadas.has(seccion)) {
+        seccionesSeleccionadas.delete(seccion);
+    } else {
+        seccionesSeleccionadas.add(seccion);
+    }
+    actualizarResumenSecciones();
+}
+
+// Función para seleccionar todas las secciones
+function seleccionarTodasSecciones() {
+    const checkboxes = document.querySelectorAll('#seccionesDisponibles input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = true;
+        seccionesSeleccionadas.add(checkbox.value);
+    });
+    actualizarResumenSecciones();
+}
+
+// Función para deseleccionar todas las secciones
+function deseleccionarTodasSecciones() {
+    const checkboxes = document.querySelectorAll('#seccionesDisponibles input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+        seccionesSeleccionadas.delete(checkbox.value);
+    });
+    actualizarResumenSecciones();
+}
+
+// Función para actualizar el resumen de secciones seleccionadas
+function actualizarResumenSecciones() {
+    const resumen = document.getElementById('seccionesSeleccionadas');
+    if (seccionesSeleccionadas.size === 0) {
+        resumen.textContent = 'Ninguna';
+    } else {
+        resumen.textContent = Array.from(seccionesSeleccionadas).sort().join(', ');
+    }
 }
 
 // Función para abrir la vista previa de la lista de alumnos
@@ -738,11 +1122,21 @@ function cerrarExcelPreview() {
 
 // Modificar displayExcelData para limitar la altura a 10 filas y permitir scroll
 function displayExcelData() {
+    console.log('\n=== MOSTRANDO DATOS DE EXCEL ===');
+    console.log('1. Estado de alumnosData:', {
+        longitud: alumnosData.length,
+        primerosAlumnos: alumnosData.slice(0, 3)
+    });
+    
     const container = document.getElementById('excelData');
     if (!alumnosData.length) {
+        console.log('2. No hay datos de alumnos disponibles');
         container.innerHTML = '<p>No hay datos de alumnos disponibles</p>';
         return;
     }
+    
+    console.log('3. Procesando datos de alumnos...');
+    
     // Agrupar por sección
     const alumnosPorSeccion = alumnosData.reduce((acc, alumno) => {
         if (!acc[alumno.seccion]) {
@@ -751,8 +1145,12 @@ function displayExcelData() {
         acc[alumno.seccion].push(alumno);
         return acc;
     }, {});
+    
+    console.log('4. Alumnos agrupados por sección:', alumnosPorSeccion);
+    
     let html = '';
     Object.entries(alumnosPorSeccion).forEach(([seccion, alumnos]) => {
+        console.log(`5. Procesando sección ${seccion} con ${alumnos.length} alumnos`);
         html += `
             <div class="seccion-grupo">
                 <h4>Sección ${seccion}</h4>
@@ -779,6 +1177,8 @@ function displayExcelData() {
             </div>
         `;
     });
+    
+    console.log('6. HTML generado y aplicado al contenedor');
     container.innerHTML = html;
 }
 
@@ -846,6 +1246,209 @@ function formatearNumero(numero) {
     return numero.startsWith('51') ? numero : '51' + numero;
 }
 
+// Función para calcular y mostrar el resumen de mensajes antes del envío
+async function calcularResumenMensajes() {
+    console.log('\n=== CALCULANDO RESUMEN DE MENSAJES ===');
+    console.log('Fechas seleccionadas:', Array.from(selectedAttendanceFiles));
+
+    if (selectedAttendanceFiles.size === 0) {
+        alert('Por favor, selecciona al menos una fecha para enviar notificaciones');
+        return;
+    }
+
+    const asistenciasGuardadas = JSON.parse(localStorage.getItem('asistenciasData') || '{}');
+    console.log('Asistencias guardadas:', asistenciasGuardadas);
+
+    const ausenciasPorAlumno = {};
+    let totalMensajes = 0;
+    let alumnosConCelular = 0;
+    let alumnosSinCelular = 0;
+
+    for (const fecha of selectedAttendanceFiles) {
+        console.log('\nProcesando fecha:', fecha);
+        const data = asistenciasGuardadas[fecha];
+        if (!data) {
+            console.log('No hay datos para esta fecha');
+            continue;
+        }
+
+        const alumnosFaltantes = alumnosData.filter(alumno =>
+            determinarFalta(alumno, data.asistencias, fecha)
+        );
+
+        console.log('Alumnos faltantes encontrados:', alumnosFaltantes.length);
+
+        for (const alumno of alumnosFaltantes) {
+            const id = alumno.nombre + '_' + alumno.celular;
+            if (!ausenciasPorAlumno[id]) {
+                ausenciasPorAlumno[id] = {
+                    alumno: alumno,
+                    fechas: []
+                };
+            }
+            ausenciasPorAlumno[id].fechas.push(new Date(fecha));
+        }
+    }
+
+    // Calcular mensajes por alumno
+    const resumenPorAlumno = [];
+    for (const id in ausenciasPorAlumno) {
+        const { alumno, fechas } = ausenciasPorAlumno[id];
+        
+        if (alumno.celular && alumno.celular.length >= 9) {
+            alumnosConCelular++;
+            const plantilla = fechas.length > 1 ? 'alertafaltasvarias' : 'alerta_faltas';
+            resumenPorAlumno.push({
+                nombre: alumno.nombre,
+                celular: alumno.celular,
+                seccion: alumno.seccion,
+                fechas: fechas.length,
+                plantilla: plantilla,
+                mensajes: 1 // 1 mensaje por alumno
+            });
+            totalMensajes++;
+        } else {
+            alumnosSinCelular++;
+        }
+    }
+
+    // Crear modal con el resumen
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+        background: white;
+        padding: 30px;
+        border-radius: 10px;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    `;
+
+    const fechaFormateada = Array.from(selectedAttendanceFiles)
+        .sort()
+        .map(f => new Date(f).toLocaleDateString('es-ES'))
+        .join(', ');
+
+    content.innerHTML = `
+        <h2 style="color: #333; margin-bottom: 20px; text-align: center;">
+            📱 Resumen de Envío de Mensajes
+        </h2>
+        
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h3 style="color: #495057; margin-top: 0;">📊 Estadísticas Generales</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: bold; color: #1976d2;">${totalMensajes}</div>
+                    <div style="color: #666;">Total de Mensajes</div>
+                </div>
+                <div style="background: #e8f5e8; padding: 15px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: bold; color: #2e7d32;">${alumnosConCelular}</div>
+                    <div style="color: #666;">Alumnos con Celular</div>
+                </div>
+                <div style="background: #fff3e0; padding: 15px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: bold; color: #f57c00;">${alumnosSinCelular}</div>
+                    <div style="color: #666;">Sin Número</div>
+                </div>
+                <div style="background: #f3e5f5; padding: 15px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: bold; color: #7b1fa2;">${selectedAttendanceFiles.size}</div>
+                    <div style="color: #666;">Fechas Seleccionadas</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: #495057;">📅 Fechas de Inasistencia</h3>
+            <p style="background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107;">
+                <strong>Fechas:</strong> ${fechaFormateada}
+            </p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: #495057;">👥 Detalle por Alumno</h3>
+            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead style="background: #f8f9fa;">
+                        <tr>
+                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid #ddd;">Alumno</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid #ddd;">Sección</th>
+                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid #ddd;">Celular</th>
+                            <th style="padding: 10px; text-align: center; border-bottom: 1px solid #ddd;">Faltas</th>
+                            <th style="padding: 10px; text-align: center; border-bottom: 1px solid #ddd;">Plantilla</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${resumenPorAlumno.map(alumno => `
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">${alumno.nombre}</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">${alumno.seccion}</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">${alumno.celular}</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                                    <span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px;">
+                                        ${alumno.fechas}
+                                    </span>
+                                </td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                                    <span style="background: #17a2b8; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px;">
+                                        ${alumno.plantilla}
+                                    </span>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="background: #d4edda; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+            <h4 style="color: #155724; margin-top: 0;">💰 Costo Estimado</h4>
+            <p style="margin: 0; color: #155724;">
+                <strong>Mensajes a enviar:</strong> ${totalMensajes} | 
+                <strong>Costo aproximado:</strong> $${(totalMensajes * 0.005).toFixed(3)} USD
+                <br><small>(Basado en ~$0.005 por mensaje de WhatsApp Business API)</small>
+            </p>
+        </div>
+
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button onclick="this.closest('.modal-overlay').remove()" 
+                    style="padding: 12px 24px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                ❌ Cancelar
+            </button>
+            <button onclick="confirmarEnvioMensajes()" 
+                    style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                ✅ Confirmar Envío (${totalMensajes} mensajes)
+            </button>
+        </div>
+    `;
+
+    modal.className = 'modal-overlay';
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+}
+
+// Función para confirmar el envío después de mostrar el resumen
+async function confirmarEnvioMensajes() {
+    // Remover el modal de resumen
+    document.querySelector('.modal-overlay').remove();
+    
+    // Ejecutar el envío real
+    await sendWhatsAppNotifications();
+}
+
+// Modificar la función original para que use el resumen
 async function sendWhatsAppNotifications() {
     console.log('\n=== Enviando notificaciones ===');
     console.log('Fechas seleccionadas:', Array.from(selectedAttendanceFiles));
@@ -892,16 +1495,15 @@ async function sendWhatsAppNotifications() {
     for (const id in ausenciasPorAlumno) {
         const { alumno, fechas } = ausenciasPorAlumno[id];
         const fechaFormateada = fechas
-    .sort((a, b) => a - b)
-    .map(f => {
-        const fechaAjustada = new Date(f.getTime() + 24 * 60 * 60 * 1000); // sumar 1 día
-        return fechaAjustada.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
-        });
-    });
-
+            .sort((a, b) => a - b)
+            .map(f => {
+                const fechaAjustada = new Date(f.getTime() + 24 * 60 * 60 * 1000); // sumar 1 día
+                return fechaAjustada.toLocaleDateString('es-ES', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric'
+                });
+            });
 
         const plantilla = fechas.length > 1 ? 'alertafaltasvarias' : 'alerta_faltas';
 
@@ -963,7 +1565,7 @@ async function sendWhatsAppNotifications() {
         totalErrores
     });
 
-    alert(`Notificaciones enviadas:\n- Enviados: ${totalEnviados}\n- Errores: ${totalErrores}`);
+    alert(`✅ Notificaciones enviadas:\n- Enviados: ${totalEnviados}\n- Errores: ${totalErrores}`);
 }
 
 
@@ -972,6 +1574,7 @@ async function sendWhatsAppNotifications() {
 window.onload = function() {
     loadAvailableFiles();
     loadAttendanceFiles();
+    cargarSeccionesDisponibles(); // Cargar secciones disponibles
     
     const savedAlumnos = localStorage.getItem('alumnosData');
     if (savedAlumnos) {

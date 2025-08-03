@@ -37,6 +37,28 @@
                 </div>
                 <button id="btnActualizarVistaPrevia" onclick="actualizarVistaPreviaDat()" style="margin-top:10px;width:100%;">Actualizar Vista Previa</button>
                 <div id="datPreview" class="preview-box"></div>
+                
+                <!-- Selector de secciones para procesar -->
+                <div id="seccionSelector" style="margin-top: 15px; display: none;">
+                    <h4>Seleccionar Secciones a Procesar</h4>
+                    <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                        Selecciona solo las secciones que quieres procesar para optimizar el rendimiento:
+                    </p>
+                    <div id="seccionesDisponibles" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                        <!-- Las secciones se cargarán dinámicamente aquí -->
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                        <button onclick="seleccionarTodasSecciones()" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                            Seleccionar Todas
+                        </button>
+                        <button onclick="deseleccionarTodasSecciones()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                            Deseleccionar Todas
+                        </button>
+                    </div>
+                    <div style="background: #e9ecef; padding: 10px; border-radius: 4px; font-size: 14px;">
+                        <strong>Secciones seleccionadas:</strong> <span id="seccionesSeleccionadas">Ninguna</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -59,7 +81,7 @@
                         <button onclick="selectAllAttendance()">Seleccionar Todo</button>
                         <button onclick="deselectAllAttendance()">Deseleccionar Todo</button>
                     </div>
-                    <button onclick="sendWhatsAppNotifications()">Enviar Notificaciones</button>
+                    <button onclick="calcularResumenMensajes()">Enviar Notificaciones</button>
                     <div class="cleanup-controls">
                         <button onclick="limpiarHistorialAsistencias()" class="cleanup-btn">Limpiar Historial Asistencias</button>
                         <button onclick="recargarListas()" class="cleanup-btn">Recargar Listas</button>
@@ -69,7 +91,7 @@
                 <div id="attendanceData"></div>
                 <div class="whatsapp-section">
                     <h3>Enviar Notificaciones</h3>
-                    <button onclick="sendWhatsAppNotifications()">Enviar a WhatsApp</button>
+                    <button onclick="calcularResumenMensajes()">Enviar a WhatsApp</button>
                 </div>
             </div>
         </div>
