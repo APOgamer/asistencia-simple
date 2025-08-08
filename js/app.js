@@ -7,7 +7,7 @@ let selectedAttendanceFiles = new Set();
 let seccionesSeleccionadas = new Set();
 
 // Configuración de WhatsApp
-const WSP_TOKEN = 'EAAUJUvz0VZBEBPJUnxY035Gj80Ydv6KnV48c1O8awAi0KIUcyKhZA3HqGgNjrO8dWSbmWdfk70HPyGnpBLaNsoDuPAh2iyYSosYdxvou3QF3Vc2ZB8pO3v350OjzPPqC9z0MHavoNMxQIOeBjsYjJhxlrwuYN5Ey39vsj0k42da2eOlYSpSq7pjhY3zlGdtAdkyf1nnOZC7GfSdGzftVro9C97rNJ9w4e3mF06uKHZAJRiT2aFB8TG7UFV76GJQZDZD';
+const WSP_TOKEN = 'EAAUJUvz0VZBEBPBRPipnzobPEA3xj6lYcLXoZBS81Kv4TYjR2fgZBUFOCniDxwTe0HQkjzaPAcW14bEA4mtYATOIiRI57LG5WO4JlKCniegI8ACJBLlxPBoSbzoHE6HpV8GUlYfZBKgKZCdC7xtkCYzZAoRlpBdmds6V6EoVUZBfTeUG3RiD60GJxsw03RGdmQaul49fdDr4ZBplVSP6lW6cECxutB8W5na7lcaZCLZCeOnoAE57QgP1KMjKZB6YX0ZD';
 const WSP_PHONE_ID = '651602738042158';
 
 // Configuración de turnos
@@ -1448,7 +1448,103 @@ async function confirmarEnvioMensajes() {
     await sendWhatsAppNotifications();
 }
 
-// Modificar la función original para que use el resumen
+// Nueva función para intentar enviar mensaje normal y fallback a plantilla si es necesario
+async function enviarMensajeWhatsApp(alumno, fechas, plantilla) {
+    const numeroFormateado = formatearNumero(alumno.celular);
+    const fechaFormateada = fechas
+        .sort((a, b) => a - b)
+        .map(f => {
+            const fechaAjustada = new Date(f.getTime() + 24 * 60 * 60 * 1000); // sumar 1 día
+            return fechaAjustada.toLocaleDateString('es-ES', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+        });
+
+    // Mensaje de texto normal
+    const texto = fechas.length > 1
+        ? `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia los días: ${fechaFormateada.join(', ')}.`
+        : `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia el día: ${fechaFormateada[0]}.`;
+
+    // 1. Intentar enviar mensaje normal
+    try {
+        const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${WSP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                messaging_product: "whatsapp",
+                to: numeroFormateado,
+                type: "text",
+                text: { body: texto }
+            })
+        });
+        const result = await response.json();
+        // Si no hay error, mensaje enviado correctamente
+        if (response.ok && !result.error) {
+            console.log('Mensaje normal enviado exitosamente:', result);
+            return { ok: true, tipo: 'normal' };
+        }
+        // Si error es "no conversation found", fallback a plantilla
+        if (result.error && result.error.code === 131047) {
+            console.log('No hay conversación iniciada, se usará plantilla');
+            // Fallback a plantilla abajo
+        } else {
+            // Otro error
+            throw result.error || result;
+        }
+    } catch (error) {
+        // Si error es "no conversation found", fallback a plantilla
+        if (error && error.code === 131047) {
+            console.log('No hay conversación iniciada, se usará plantilla');
+            // Fallback a plantilla abajo
+        } else {
+            console.error('Error al enviar mensaje normal:', error);
+            throw error;
+        }
+    }
+
+    // 2. Fallback: enviar plantilla
+    const parametros = [
+        { type: "text", text: alumno.nombre },
+        { type: "text", text: fechas.length > 1 ? fechaFormateada.join(', ') : fechaFormateada[0] }
+    ];
+    try {
+        const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${WSP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                messaging_product: "whatsapp",
+                to: numeroFormateado,
+                type: "template",
+                template: {
+                    name: plantilla,
+                    language: { code: "es" },
+                    components: [
+                        { type: "body", parameters: parametros }
+                    ]
+                }
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || result.error) {
+            throw result.error || result;
+        }
+        console.log('Mensaje plantilla enviado exitosamente:', result);
+        return { ok: true, tipo: 'plantilla' };
+    } catch (error) {
+        console.error('Error al enviar plantilla:', error);
+        throw error;
+    }
+}
+
+// Modificar la función original para que use el nuevo flujo
 async function sendWhatsAppNotifications() {
     console.log('\n=== Enviando notificaciones ===');
     console.log('Fechas seleccionadas:', Array.from(selectedAttendanceFiles));
@@ -1494,68 +1590,16 @@ async function sendWhatsAppNotifications() {
 
     for (const id in ausenciasPorAlumno) {
         const { alumno, fechas } = ausenciasPorAlumno[id];
-        const fechaFormateada = fechas
-            .sort((a, b) => a - b)
-            .map(f => {
-                const fechaAjustada = new Date(f.getTime() + 24 * 60 * 60 * 1000); // sumar 1 día
-                return fechaAjustada.toLocaleDateString('es-ES', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric'
-                });
-            });
-
         const plantilla = fechas.length > 1 ? 'alertafaltasvarias' : 'alerta_faltas';
 
-        const parametros = [
-            { type: "text", text: alumno.nombre },
-            { type: "text", text: fechas.length > 1 ? fechaFormateada.join(', ') : fechaFormateada[0] }
-        ];
-
-        console.log(`Enviando plantilla "${plantilla}" a:`, {
-            alumno: alumno.nombre,
-            celular: alumno.celular,
-            fechas: fechaFormateada
-        });
-
         try {
-            const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${WSP_TOKEN}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    messaging_product: "whatsapp",
-                    to: formatearNumero(alumno.celular),
-                    type: "template",
-                    template: {
-                        name: plantilla,
-                        language: {
-                            code: "es"
-                        },
-                        components: [
-                            {
-                                type: "body",
-                                parameters: parametros
-                            }
-                        ]
-                    }
-                })
-            });
-
-            const result = await response.json();
-            console.log('Respuesta de WhatsApp API:', result);
-
-            if (!response.ok || result.error) {
-                console.error(`Error al enviar mensaje a ${alumno.nombre}:`, result.error || result);
-                totalErrores++;
-            } else {
-                console.log('Mensaje enviado exitosamente');
+            const resultado = await enviarMensajeWhatsApp(alumno, fechas, plantilla);
+            if (resultado.ok) {
                 totalEnviados++;
+            } else {
+                totalErrores++;
             }
         } catch (error) {
-            console.error(`Error al enviar mensaje a ${alumno.nombre}:`, error);
             totalErrores++;
         }
     }
@@ -1567,8 +1611,6 @@ async function sendWhatsAppNotifications() {
 
     alert(`✅ Notificaciones enviadas:\n- Enviados: ${totalEnviados}\n- Errores: ${totalErrores}`);
 }
-
-
 
 // Cargar datos guardados al iniciar
 window.onload = function() {
@@ -1675,4 +1717,4 @@ function limpiarHistorialEntero() {
         alert('Historial completo limpiado correctamente');
         location.reload();
     }
-} 
+}
