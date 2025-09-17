@@ -1496,8 +1496,8 @@ async function enviarMensajeWhatsApp(alumno, fechas, plantilla) {
 
     // Mensaje de texto normal
     const texto = fechas.length > 1
-        ? `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia los días: ${fechaFormateada.join(', ')}. Por favor responder a este mensaje el próximo martes ${fechaMartes} a las 6 pm.`
-        : `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia el día: ${fechaFormateada[0]}. Por favor responder a este mensaje el próximo martes ${fechaMartes} a las 6 pm.`;
+        ? `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia los días: ${fechaFormateada.join(', ')}. Por favor responder a este mensaje el próximo martes ${fechaMartes} a las 6 pm. Si usted asistió, no se preocupe: este aviso solo refleja el registro del huellero y puede que no coincida con el registro oficial de asistencia (por olvido de marcar, falla del huellero o error de identificación).`
+        : `Estimado/a ${alumno.nombre}, se ha registrado su inasistencia el día: ${fechaFormateada[0]}. Por favor responder a este mensaje el próximo martes ${fechaMartes} a las 6 pm. Si usted asistió, no se preocupe: este aviso solo refleja el registro del huellero y puede que no coincida con el registro oficial de asistencia (por olvido de marcar, falla del huellero o error de identificación).`;
 
     try {
         const response = await fetch(`https://graph.facebook.com/v17.0/${WSP_PHONE_ID}/messages`, {
